@@ -1,0 +1,17 @@
+{
+  "name": "quran-pages-khatma-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lightweight Discord bot for Quran pages and scheduled khatma reminders.",
+  "main": "src/index.js",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=20.0.0" },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.7"
+  }
+}
