@@ -21,6 +21,7 @@ const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
 const DATA_DIR = path.resolve(__dirname, '../data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
+const PAGE_CACHE_DIR = path.join(DATA_DIR, 'pages');
 const MAX_PAGE = 604;
 const DEFAULT_INTERVAL = 2 * 60 * 60 * 1000;
 const timers = new Map();
@@ -31,6 +32,7 @@ if (!TOKEN || !CLIENT_ID) {
 }
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(PAGE_CACHE_DIR, { recursive: true });
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); }
   catch { return { users: {}, khutma: {} }; }
@@ -54,14 +56,55 @@ function pageNumber(value) {
   const page = Number(value || 1);
   return Number.isInteger(page) && page >= 1 && page <= MAX_PAGE ? page : 1;
 }
-function pageEmbed(page, color = '#2f9e44') {
+function pageEmbed(page, color = '#2f9e44', attachmentName) {
   const item = pages[page];
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(color)
     .setTitle(`صفحة ${item.page} — ${item.name || 'المصحف'}`)
     .setDescription(`السورة: **${item.name || 'المصحف'}**\nالنوع: ${item.type_ar || '—'}\nعدد الآيات: ${item.verses || '—'}`)
-    .setImage(item.musahaf)
     .setFooter({ text: 'Quran Pages & Khatma' });
+  return attachmentName ? embed.setImage(`attachment://${attachmentName}`) : embed;
+}
+async function pageAttachment(page) {
+  const item = pages[page];
+  for (const extension of ['jpg', 'png']) {
+    const cachedName = `quran-page-${page}.${extension}`;
+    const cachedPath = path.join(PAGE_CACHE_DIR, cachedName);
+    try {
+      if (fs.statSync(cachedPath).size > 1000) return { attachment: cachedPath, name: cachedName };
+    } catch {}
+  }
+  const sources = [
+    item.musahaf,
+    `https://raw.githubusercontent.com/GovarJabbar/Quran-PNG/master/${String(page).padStart(3, '0')}.png`
+  ];
+  let buffer;
+  for (const source of sources) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      const response = await fetch(source, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (!response.ok) continue;
+      const candidate = Buffer.from(await response.arrayBuffer());
+      if (candidate.length > 1000) {
+        buffer = candidate;
+        break;
+      }
+    } catch {}
+  }
+  if (!buffer) throw new Error(`تعذر تحميل صورة الصفحة ${page} من المصادر المتاحة`);
+  const extension = buffer[0] === 0x89 && buffer[1] === 0x50 ? 'png' : 'jpg';
+  const name = `quran-page-${page}.${extension}`;
+  const filePath = path.join(PAGE_CACHE_DIR, name);
+  const temporaryPath = `${filePath}.tmp`;
+  fs.writeFileSync(temporaryPath, buffer);
+  fs.renameSync(temporaryPath, filePath);
+  return { attachment: filePath, name };
+}
+async function pageMessage(page, color) {
+  const file = await pageAttachment(page);
+  return { embeds: [pageEmbed(page, color, file.name)], files: [file] };
 }
 function pageButtons(page, userId) {
   return new ActionRowBuilder().addComponents(
@@ -99,7 +142,7 @@ function scheduleKhatma(client, guildId) {
     try {
       const channel = await client.channels.fetch(config.channelId);
       const nextPage = pageNumber(config.page + 1);
-      await channel.send({ embeds: [pageEmbed(nextPage, config.color)] });
+      await channel.send(await pageMessage(nextPage, config.color));
       config.page = nextPage;
       if (nextPage === MAX_PAGE) {
         await channel.send({ content: 'تمت الختمة بحمد الله.', files: [path.join(__dirname, 'data/khatam_AR.jpg')] });
@@ -142,7 +185,7 @@ client.on('interactionCreate', async interaction => {
       const page = pageNumber(interaction.options.getInteger('page') || state.users[interaction.user.id] || 1);
       state.users[interaction.user.id] = page;
       saveState();
-      return interaction.reply({ embeds: [pageEmbed(page)], components: [pageButtons(page, interaction.user.id)] });
+      return interaction.reply({ ...(await pageMessage(page)), components: [pageButtons(page, interaction.user.id)] });
     }
     if (interaction.isButton() && interaction.customId.startsWith('quran:')) {
       const [, action, owner, rawPage] = interaction.customId.split(':');
@@ -157,7 +200,7 @@ client.on('interactionCreate', async interaction => {
       }
       state.users[interaction.user.id] = page;
       saveState();
-      return interaction.update({ embeds: [pageEmbed(page)], components: [pageButtons(page, interaction.user.id)] });
+      return interaction.update({ ...(await pageMessage(page)), components: [pageButtons(page, interaction.user.id)] });
     }
     if (interaction.isChatInputCommand() && interaction.commandName === 'khutma') {
       const sub = interaction.options.getSubcommand();
