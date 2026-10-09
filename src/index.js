@@ -116,13 +116,25 @@ function scheduleKhatma(client, guildId) {
 }
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   const route = GUILD_ID ? Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID) : Routes.applicationCommands(CLIENT_ID);
-  await rest.put(route, { body: commandDefinitions() });
+  try {
+    await rest.put(route, { body: commandDefinitions() });
+  } catch (error) {
+    if (error.code === 50001 && GUILD_ID) {
+      console.error(`Discord رفض الوصول إلى السيرفر ${GUILD_ID}. تأكد أن البوت مضاف إلى السيرفر وأن DISCORD_GUILD_ID صحيح.`);
+      console.error(`رابط الدعوة: https://discord.com/oauth2/authorize?client_id=${CLIENT_ID}&permissions=2147485696&scope=bot%20applications.commands`);
+    } else {
+      console.error('تعذر تسجيل أوامر Discord:', error.message);
+    }
+    return;
+  }
   for (const guildId of Object.keys(state.khutma)) scheduleKhatma(client, guildId);
   console.log(`Logged in as ${client.user.tag}`);
 });
+
+client.on('error', (error) => console.error('Discord client error:', error.message));
 
 client.on('interactionCreate', async interaction => {
   try {
